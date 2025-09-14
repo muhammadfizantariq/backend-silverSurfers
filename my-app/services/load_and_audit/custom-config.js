@@ -40,21 +40,21 @@ export default {
 
   artifacts: [
 
-    { id: 'PageText', gatherer: './custom_gatherers/text-gatherer.js' },
+    { id: 'PageText', gatherer: '../load_and_audit/custom_gatherers/text-gatherer.js' },
 
-    { id: 'PageLinkColors', gatherer: './custom_gatherers/color-gatherer.js' },
+    { id: 'PageLinkColors', gatherer: '../load_and_audit/custom_gatherers/color-gatherer.js' },
 
-    { id: 'BrittleLayoutElements', gatherer: './custom_gatherers/layout-gatherer.js' },
+    { id: 'BrittleLayoutElements', gatherer: '../load_and_audit/custom_gatherers/layout-gatherer.js' },
 
   ],
 
   audits: [
 
-    { path: './custom_audits/text-audit.js' },
+    { path: '../load_and_audit/custom_audits/text-audit.js' },
 
-    { path: './custom_audits/color-audit.js' },
+    { path: '../load_and_audit/custom_audits/color-audit.js' },
 
-    { path: './custom_audits/layout-audit.js' },
+    { path: '../load_and_audit/custom_audits/layout-audit.js' },
 
   ],
 
@@ -99,8 +99,6 @@ export default {
         { id: 'button-name', weight: 5 },
 
         { id: 'label', weight: 5 },
-
-        { id: 'font-size', weight: 5 },
 
         { id: 'interactive-color-audit', weight: 5 }, // Your custom audit
 

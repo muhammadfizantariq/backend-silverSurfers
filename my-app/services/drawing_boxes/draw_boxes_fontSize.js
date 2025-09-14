@@ -1,11 +1,10 @@
-import fs from 'fs';
+import fs from 'fs/promises'; // Use the async version of fs
 import sharp from 'sharp';
 
-// This function checks if a box area has actual visual content.
-async function isVisuallyDistinct(imagePath, rect) {
+async function isVisuallyDistinct(imagePathOrBuffer, rect) {
     try {
         if (rect.width < 2 || rect.height < 2) return false;
-        const region = await sharp(imagePath)
+        const region = await sharp(imagePathOrBuffer)
             .extract({ left: Math.floor(rect.left), top: Math.floor(rect.top), width: Math.ceil(rect.width), height: Math.ceil(rect.height) })
             .stats();
         const VISIBILITY_THRESHOLD = 5;
@@ -16,29 +15,22 @@ async function isVisuallyDistinct(imagePath, rect) {
     }
 }
 
-// --- NEW: Absolute filter based on your rule ---
-// If a box contains another, the outer (containing) box is removed.
 function filterContainingBoxes(boxes) {
     const indicesToRemove = new Set();
     for (let i = 0; i < boxes.length; i++) {
         for (let j = 0; j < boxes.length; j++) {
             if (i === j) continue;
-
-            const boxA = boxes[i].rect; // Potential container
-            const boxB = boxes[j].rect; // Potential contained box
-
+            const boxA = boxes[i].rect;
+            const boxB = boxes[j].rect;
             const contains = boxA.left <= boxB.left &&
                 boxA.top <= boxB.top &&
                 (boxA.left + boxA.width) >= (boxB.left + boxB.width) &&
                 (boxA.top + boxA.height) >= (boxB.top + boxB.height);
-
-            // If A contains B and is strictly larger, mark A for removal.
             if (contains && (boxA.width > boxB.width || boxA.height > boxB.height)) {
                 indicesToRemove.add(i);
             }
         }
     }
-
     const kept = [];
     const removed = [];
     boxes.forEach((box, index) => {
@@ -67,15 +59,19 @@ function extractBoxData(lighthouseReport, auditId) {
     return boxes;
 }
 
-async function enhanceAndHighlightMultiple(inputImagePath, outputImagePath, boundingBoxes, options = {}) {
+async function enhanceAndHighlightMultiple(imagePathOrBuffer, outputImagePath, boundingBoxes, options = {}) {
     const { scaleFactor = 1, sharpenAmount = 1, boxThickness = 3 } = options;
     try {
-        const image = sharp(inputImagePath);
+        const image = sharp(imagePathOrBuffer);
         const metadata = await image.metadata();
+        if (!metadata.width || !metadata.height) {
+            throw new Error("Could not read image metadata.");
+        }
         const newWidth = Math.round(metadata.width * scaleFactor);
         const newHeight = Math.round(metadata.height * scaleFactor);
         let processedImage = image.resize(newWidth, newHeight, { kernel: sharp.kernel.lanczos3 });
         if (sharpenAmount > 0) processedImage = processedImage.sharpen({ sigma: sharpenAmount * 0.5 });
+
         let svgElements = '';
         boundingBoxes.forEach((boxData, index) => {
             const rect = boxData.rect;
@@ -85,20 +81,19 @@ async function enhanceAndHighlightMultiple(inputImagePath, outputImagePath, boun
             const scaledWidth = Math.round(rect.width * scaleFactor);
             const scaledHeight = Math.round(rect.height * scaleFactor);
             const scaledThickness = Math.round((boxData.thickness || boxThickness) * scaleFactor);
+            
             svgElements += `<rect x="${scaledX + 1}" y="${scaledY + 1}" width="${scaledWidth}" height="${scaledHeight}" fill="none" stroke="rgba(0,0,0,0.5)" stroke-width="${scaledThickness}" />`;
             svgElements += `<rect x="${scaledX}" y="${scaledY}" width="${scaledWidth}" height="${scaledHeight}" fill="none" stroke="${boxData.color}" stroke-width="${scaledThickness}" />`;
-            const minSize = Math.round(8 * scaleFactor);
-            const maxSize = Math.round(20 * scaleFactor);
-            const idealSize = Math.round(scaledHeight * 0.8);
-            const finalSize = Math.max(minSize, Math.min(idealSize, maxSize));
-            const circleRadius = finalSize;
-            const fontSize = Math.round(finalSize * 1.2);
-            const circleCx = scaledX;
-            const circleCy = scaledY;
-            svgElements += `<circle cx="${circleCx}" cy="${circleCy}" r="${circleRadius + 1}" fill="rgba(0,0,0,0.5)" />`;
-            svgElements += `<circle cx="${circleCx}" cy="${circleCy}" r="${circleRadius}" fill="${boxData.color}" />`;
-            svgElements += `<text x="${circleCx}" y="${circleCy}" font-family="sans-serif" font-size="${fontSize}" fill="white" text-anchor="middle" dominant-baseline="central" font-weight="bold">${boxNumber}</text>`;
+            
+            const idealSize = Math.max(8, Math.min(scaledHeight * 0.8, 20));
+            const circleRadius = idealSize;
+            const fontSize = Math.round(idealSize * 1.2);
+
+            svgElements += `<circle cx="${scaledX}" cy="${scaledY}" r="${circleRadius + 1}" fill="rgba(0,0,0,0.5)" />`;
+            svgElements += `<circle cx="${scaledX}" cy="${scaledY}" r="${circleRadius}" fill="${boxData.color}" />`;
+            svgElements += `<text x="${scaledX}" y="${scaledY}" font-family="sans-serif" font-size="${fontSize}" fill="white" text-anchor="middle" dominant-baseline="central" font-weight="bold">${boxNumber}</text>`;
         });
+
         const svgOverlay = `<svg width="${newWidth}" height="${newHeight}">${svgElements}</svg>`;
         await processedImage.composite([{ input: Buffer.from(svgOverlay), top: 0, left: 0 }]).png({ quality: 95, adaptiveFiltering: true }).toFile(outputImagePath);
     } catch (error) {
@@ -106,46 +101,52 @@ async function enhanceAndHighlightMultiple(inputImagePath, outputImagePath, boun
     }
 }
 
-export async function processTextFontAudit(jsonReportPath) {
+// --- MODIFIED EXPORTED FUNCTION ---
+export async function processTextFontAudit(jsonReportPath, outputImagePath) {
     const AUDIT_ID = 'text-font-audit';
-    const outputImagePath = './highlighted-text-font.png';
+
+    // 1. Add validation for the required outputImagePath
+    if (!outputImagePath) {
+        throw new Error("outputImagePath is required for processTextFontAudit.");
+    }
+    
     console.log(`🔄 Reading report: ${jsonReportPath}`);
     let lighthouseReport;
     try {
-        lighthouseReport = JSON.parse(fs.readFileSync(jsonReportPath, 'utf8'));
+        // 2. Use async file read instead of sync
+        lighthouseReport = JSON.parse(await fs.readFile(jsonReportPath, 'utf8'));
     } catch (error) {
-        console.error('❌ Error parsing JSON report:', error.message); 
-        return;
+        console.error('❌ Error parsing JSON report:', error.message);
+        return null;
     }
+
     const screenshotData = lighthouseReport.fullPageScreenshot?.screenshot?.data;
     if (!screenshotData) {
-        console.error('❌ Error: Report does not contain a full-page screenshot.'); 
-        return;
+        console.error('❌ Error: Report does not contain a full-page screenshot.');
+        return null;
     }
-    const tempScreenshotPath = './temp_screenshot_for_boxing.png';
-    fs.writeFileSync(tempScreenshotPath, Buffer.from(screenshotData.split(',').pop(), 'base64'));
+    
+    // 3. Work with the screenshot in memory instead of creating a temp file
+    const screenshotBuffer = Buffer.from(screenshotData.split(',').pop(), 'base64');
 
     console.log(`🔎 Extracting data for audit: "${AUDIT_ID}"`);
     const allBoxes = extractBoxData(lighthouseReport, AUDIT_ID);
-
-    // --- UPDATED LOGIC ---
-    // 1. Apply the absolute container filter. No merging is performed.
+    
     const { kept: nonContainerBoxes, removed: containerBoxes } = filterContainingBoxes(allBoxes);
 
-    // 2. Filter out any remaining boxes that are on empty space.
     const finalBoxes = [];
     const visuallyEmptyBoxes = [];
     for (const box of nonContainerBoxes) {
-        if (await isVisuallyDistinct(tempScreenshotPath, box.rect)) {
+        // 4. Pass the buffer directly to the helper function
+        if (await isVisuallyDistinct(screenshotBuffer, box.rect)) {
             finalBoxes.push(box);
         } else {
             visuallyEmptyBoxes.push(box);
         }
     }
-    // --- END UPDATED LOGIC ---
 
     if (containerBoxes.length > 0) {
-        console.log('\n🗑️ Skipped Container Boxes (per your rule):');
+        console.log('\n🗑️ Skipped Container Boxes:');
         console.table(containerBoxes.map(box => ({ Text: (box.textSnippet || '').replace(/\s+/g, ' ').trim() })));
     }
     if (visuallyEmptyBoxes.length > 0) {
@@ -154,9 +155,8 @@ export async function processTextFontAudit(jsonReportPath) {
     }
 
     if (finalBoxes.length === 0) {
-        console.log('\nℹ️ No elements left to highlight after filtering. No image will be generated.');
-        fs.unlinkSync(tempScreenshotPath);
-        return;
+        console.log('\nℹ️ No elements left to highlight. No image will be generated.');
+        return null; // 5. Return null if no image is created
     }
 
     console.log('\n📦 Legend for Highlighted Boxes:');
@@ -167,8 +167,11 @@ export async function processTextFontAudit(jsonReportPath) {
     console.table(tableData);
 
     console.log(`\n🎨 Drawing ${finalBoxes.length} final boxes on screenshot...`);
-    await enhanceAndHighlightMultiple(tempScreenshotPath, outputImagePath, finalBoxes);
+    await enhanceAndHighlightMultiple(screenshotBuffer, outputImagePath, finalBoxes);
 
-    fs.unlinkSync(tempScreenshotPath);
+    // No need to delete a temp file anymore.
     console.log(`\n✅ Success! Image saved to: ${outputImagePath}`);
+    
+    // 6. Return the path to confirm success and provide the file location
+    return outputImagePath;
 }

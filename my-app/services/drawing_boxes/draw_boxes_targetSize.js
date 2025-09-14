@@ -86,9 +86,14 @@ async function enhanceAndHighlight(imageBuffer, outputImagePath, boundingBoxes, 
     }
 }
 
-export async function processTargetSizeAudit(jsonReportPath) {
+// --- MODIFIED FUNCTION ---
+export async function processTargetSizeAudit(jsonReportPath, outputImagePath) {
     const AUDIT_ID = 'target-size';
-    const outputImagePath = './highlighted-target-size.png';
+    // const outputImagePath = '../drawing_boxes/highlighted-target-size.png'; // This is no longer needed
+
+    if (!outputImagePath) {
+        throw new Error("outputImagePath is required.");
+    }
 
     console.log(`🔄 Reading report: ${jsonReportPath}`);
     const lighthouseReport = JSON.parse(fs.readFileSync(jsonReportPath, 'utf8'));
@@ -96,7 +101,7 @@ export async function processTargetSizeAudit(jsonReportPath) {
     const screenshotData = lighthouseReport.fullPageScreenshot?.screenshot?.data;
     if (!screenshotData) {
         console.error('❌ Error: Report does not contain a full-page screenshot.'); 
-        return;
+        return null; // Return null if no image can be generated
     }
     const screenshotBuffer = Buffer.from(screenshotData.split(',').pop(), 'base64');
 
@@ -113,7 +118,7 @@ export async function processTargetSizeAudit(jsonReportPath) {
 
     if (finalBoxes.length === 0) {
         console.log(`\n✅ No target size issues found. No image will be generated.`);
-        return;
+        return null; // Return null to signal no image was created
     }
 
     console.log('\n📦 Legend for Highlighted Target Size Issues:');
@@ -128,4 +133,7 @@ export async function processTargetSizeAudit(jsonReportPath) {
     await enhanceAndHighlight(screenshotBuffer, outputImagePath, finalBoxes, { boxColor: 'purple' });
 
     console.log(`\n✅ Success! Image saved to: ${outputImagePath}`);
+    
+    // Return the path to confirm success and provide the file location
+    return outputImagePath;
 }

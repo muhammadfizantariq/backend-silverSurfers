@@ -543,12 +543,28 @@ class ElderlyAccessibilityPDFGenerator {
         this.currentY = tableY + 20;
     }
 
-     async generateReport(inputFile, outputFile, options = {}) {
+    async generateReport(inputFile, outputFile, options = {}) {
         try {
             const reportData = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+            const clientEmail = options.clientEmail || 'unknown-client';
+            const formFactor = reportData.configSettings?.formFactor || 'desktop';
+            const url = reportData.finalUrl || 'unknown-url';
+            
+            // Create sanitized filename from URL
+            const sanitizedUrl = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9.-]/g, '-').replace(/-+/g, '-');
+            const fileName = `${sanitizedUrl}-${formFactor}.pdf`;
+            
+            // Create client folder
+            const clientFolder = path.resolve(clientEmail);
+            if (!fs.existsSync(clientFolder)) {
+                fs.mkdirSync(clientFolder, { recursive: true });
+            }
+            
+            // Set final output path
+            const finalOutputPath = path.join(clientFolder, fileName);
 
             const scoreData = calculateSeniorFriendlinessScore(reportData);
-            const stream = fs.createWriteStream(outputFile);
+            const stream = fs.createWriteStream(finalOutputPath);
             this.doc.pipe(stream);
 
             console.log('Generating senior-friendly accessibility report...');
@@ -587,8 +603,18 @@ class ElderlyAccessibilityPDFGenerator {
 
             return new Promise((resolve, reject) => {
                 stream.on('finish', () => {
-                    console.log(`Senior accessibility report generated successfully: ${outputFile}`);
-                    resolve(outputFile);
+                    const successMessage = {
+                        success: true,
+                        message: 'Senior accessibility report generated successfully',
+                        reportPath: finalOutputPath,
+                        clientFolder: clientFolder,
+                        fileName: fileName,
+                        formFactor: formFactor,
+                        url: url,
+                        score: scoreData.finalScore.toFixed(0)
+                    };
+                    console.log(`Senior accessibility report generated successfully: ${finalOutputPath}`);
+                    resolve(successMessage);
                 });
                 stream.on('error', reject);
             });
@@ -604,7 +630,8 @@ export async function generateSeniorAccessibilityReport(options = {}) {
     const {
         inputFile = 'report.json',
         outputFile = 'silver-surfers-report.pdf',
-        imagePaths = {}
+        imagePaths = {},
+        clientEmail = 'unknown-client'
     } = options;
 
     const generator = new ElderlyAccessibilityPDFGenerator({ imagePaths });
