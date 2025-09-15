@@ -9,70 +9,6 @@ import customConfig from './custom-config.js';
 
 puppeteer.use(stealthPlugin());
 
-// Function to calculate the weighted "Senior Friendliness" score
-function calculateSeniorFriendlinessScore(report) {
-    console.log('🔍 [Score Calculation] Starting Silver Surfers score calculation...');
-    
-    const categoryId = 'senior-friendly';
-    const categoryConfig = customConfig.categories[categoryId];
-    
-    if (!categoryConfig) {
-        console.error(`❌ [Score Calculation] Error: '${categoryId}' category not found in config.`);
-        console.log('📊 [Score Calculation] Available categories:', Object.keys(customConfig.categories || {}));
-        return { finalScore: 0, totalWeightedScore: 0, totalWeight: 0, error: 'Category not found' };
-    }
-
-    const auditRefs = categoryConfig.auditRefs;
-    const auditResults = report.audits;
-
-    console.log(`📋 [Score Calculation] Found ${auditRefs?.length || 0} audit references in senior-friendly category`);
-    
-    if (!auditRefs || auditRefs.length === 0) {
-        console.error('❌ [Score Calculation] No audit references found in senior-friendly category');
-        return { finalScore: 0, totalWeightedScore: 0, totalWeight: 0, error: 'No audit references' };
-    }
-
-    let totalWeightedScore = 0;
-    let totalWeight = 0;
-    let processedAudits = 0;
-    let missingAudits = [];
-
-    console.log('🔬 [Score Calculation] Processing individual audits:');
-    
-    for (const auditRef of auditRefs) {
-        const { id, weight } = auditRef;
-        const result = auditResults[id];
-        const score = result ? (result.score ?? 0) : 0;
-        
-        if (!result) {
-            console.log(`⚠️  [Score Calculation] Missing audit result for: ${id}`);
-            missingAudits.push(id);
-        } else {
-            console.log(`✅ [Score Calculation] ${id}: score=${score}, weight=${weight}, contribution=${score * weight}`);
-            processedAudits++;
-        }
-        
-        totalWeightedScore += score * weight;
-        totalWeight += weight;
-    }
-
-    console.log(`📊 [Score Calculation] Summary:`);
-    console.log(`   - Processed audits: ${processedAudits}/${auditRefs.length}`);
-    console.log(`   - Missing audits: ${missingAudits.length} ${missingAudits.length > 0 ? `(${missingAudits.join(', ')})` : ''}`);
-    console.log(`   - Total weighted score: ${totalWeightedScore}`);
-    console.log(`   - Total weight: ${totalWeight}`);
-
-    if (totalWeight === 0) {
-        console.error('❌ [Score Calculation] Total weight is 0 - cannot calculate score');
-        return { finalScore: 0, totalWeightedScore: 0, totalWeight: 0, error: 'Zero total weight' };
-    }
-
-    const finalScore = (totalWeightedScore / totalWeight) * 100;
-    console.log(`🎯 [Score Calculation] Final Silver Surfers Score: ${finalScore.toFixed(2)}`);
-    
-    return { finalScore, totalWeightedScore, totalWeight };
-}
-
 async function performAudit(url, options) {
   const { device, format, useAdvancedFeatures } = options;
   const approach = useAdvancedFeatures ? 'Advanced' : 'Standard';
@@ -204,30 +140,6 @@ const cookieSelectors = [
     };
 
     const lighthouseResult = await lighthouse(url, lighthouseOptions, customConfig);
-    
-    // Calculate Silver Surfers score before generating report
-    console.log('🎯 [Score Validation] Calculating Silver Surfers score...');
-    const scoreData = calculateSeniorFriendlinessScore(lighthouseResult.lhr);
-    
-    // Check if score is 0 and prevent JSON file generation and PDF generation
-    if (scoreData.finalScore === 0) {
-      console.error('❌ [Score Validation] Silver Surfers score is 0 - blocking JSON file generation and PDF generation');
-      console.log('🔍 [Score Validation] Score calculation details:', {
-        totalWeightedScore: scoreData.totalWeightedScore,
-        totalWeight: scoreData.totalWeight,
-        error: scoreData.error || 'No specific error'
-      });
-      
-      return { 
-        success: false, 
-        error: 'Silver Surfers score is 0 - audit may have failed or configuration issue detected',
-        scoreData: scoreData,
-        reportGenerated: false
-      };
-    }
-    
-    console.log(`✅ [Score Validation] Silver Surfers score: ${scoreData.finalScore.toFixed(2)} - proceeding with report generation`);
-    
     const report = format === 'json' ? JSON.stringify(lighthouseResult.lhr, null, 2) : lighthouseResult.report;
 
     // --- Generate a unique filename ---
@@ -239,12 +151,7 @@ const cookieSelectors = [
     fs.writeFileSync(reportPath, report);
     console.log(`✅ Lighthouse report saved to ${reportPath}`);
     
-    return { 
-      success: true, 
-      reportPath: reportPath,
-      scoreData: scoreData,
-      reportGenerated: true
-    };
+    return { success: true, reportPath: reportPath };
   } finally {
     if (browser) {
       await browser.close();

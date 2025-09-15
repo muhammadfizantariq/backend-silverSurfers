@@ -553,9 +553,14 @@ class ElderlyAccessibilityPDFGenerator {
             // Create sanitized filename from URL
             const sanitizedUrl = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9.-]/g, '-').replace(/-+/g, '-');
             const fileName = `${sanitizedUrl}-${formFactor}.pdf`;
-            
-            // Create client folder
-            const clientFolder = path.resolve(clientEmail);
+
+            // Use outputDir if provided, otherwise use clientEmail as folder
+            let clientFolder;
+            if (options.outputDir) {
+                clientFolder = path.resolve(options.outputDir, clientEmail);
+            } else {
+                clientFolder = path.resolve(clientEmail);
+            }
             if (!fs.existsSync(clientFolder)) {
                 fs.mkdirSync(clientFolder, { recursive: true });
             }
@@ -631,9 +636,12 @@ export async function generateSeniorAccessibilityReport(options = {}) {
         inputFile = 'report.json',
         outputFile = 'silver-surfers-report.pdf',
         imagePaths = {},
-        clientEmail = 'unknown-client'
+        clientEmail = 'unknown-client',
+        outputDir // <-- new option
     } = options;
 
     const generator = new ElderlyAccessibilityPDFGenerator({ imagePaths });
-    return await generator.generateReport(inputFile, outputFile, options);
+
+    // Pass outputDir to generateReport via options
+    return await generator.generateReport(inputFile, outputFile, { ...options, outputDir });
 }
