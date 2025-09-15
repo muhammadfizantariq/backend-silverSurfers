@@ -11,15 +11,21 @@
   "description": "",
   "dependencies": {
     "axios": "^1.12.1",
+    "bcryptjs": "^3.0.2",
     "cheerio": "^1.1.2",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
     "lighthouse": "^12.8.2",
+    "mongoose": "^8.18.1",
+    "nodemailer": "^7.0.6",
     "pdfkit": "^0.17.2",
     "puppeteer": "^24.20.0",
     "puppeteer-extra": "^3.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "sharp": "^0.34.3",
+    "stripe": "^18.5.0",
     "tesseract.js": "^6.0.1"
   },
   "devDependencies": {

@@ -1,6 +1,17 @@
 import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import Stripe from 'stripe';
+import authRoutes from './authRoutes.js';
+import { connectDB } from './db.js';
+import { authRequired } from './auth.js';
+
+// Load env from project root (three levels up)
+dotenv.config({ path: path.resolve(process.cwd(), '../../../.env') });
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
+
 
 // --- Your Project Modules (CORRECTED IMPORT) ---
 import { InternalLinksExtractor } from '../internal_links/internal_links.js';
@@ -9,6 +20,7 @@ import { runLighthouseLiteAudit } from '../load_and_audit/audit-module-with-lite
 import { generateSeniorAccessibilityReport } from '../report_generation/pdf_generator.js';
 import { createAllHighlightedImages } from '../drawing_boxes/draw_all.js';
 import { generateLiteAccessibilityReport } from '../report_generation/pdf-generator-lite.js';
+import { sendAuditReportEmail } from './email.js';
 
 // --- Placeholder for signaling the backend (assumed to be the same) ---
 const signalBackend = async (payload) => {
@@ -23,82 +35,98 @@ const signalBackend = async (payload) => {
 // =================================================================
 
 const runFullAuditProcess = async (job) => {
-    const { email, url } = job;
-    console.log(`\n\n--- [STARTING FULL JOB] ---`);
-    console.log(`Processing job for ${email} to audit ${url}`);
+  const { email, url } = job;
+  console.log(`\n\n--- [STARTING FULL JOB] ---`);
+  console.log(`Processing job for ${email} to audit ${url}`);
 
-    // --- FIX STEP 1: Define the FINAL destination folder at the top ---
-    const finalReportFolder = path.join('reports-full', email);
+  // Final destination for generated PDFs
+  const finalReportFolder = path.resolve(process.cwd(), 'reports-full', email);
 
-    // --- FIX STEP 2: Create the temporary folder for processing ---
-    const sanitizedEmail = email.replace(/[^a-z0-9]/gi, '_');
-    const jobFolder = path.join('reports', `${sanitizedEmail}-${Date.now()}`);
+  // Temporary working folder for images and intermediates
+  const sanitizedEmail = email.replace(/[^a-z0-9]/gi, '_');
+  const jobFolder = path.resolve(process.cwd(), 'reports', `${sanitizedEmail}-${Date.now()}`);
 
-    // --- FIX STEP 3: Create BOTH directories to ensure they exist ---
-    await fs.mkdir(finalReportFolder, { recursive: true });
-    await fs.mkdir(jobFolder, { recursive: true });
+  // Ensure folders exist
+  await fs.mkdir(finalReportFolder, { recursive: true });
+  await fs.mkdir(jobFolder, { recursive: true });
 
+  try {
+    const extractor = new InternalLinksExtractor();
+    const extractionResult = await extractor.extractInternalLinks(url);
 
-    try {
-        const extractor = new InternalLinksExtractor();
-        const extractionResult = await extractor.extractInternalLinks(url);
-
-        if (!extractionResult.success) {
-            throw new Error(`Link extraction failed: ${extractionResult.details}`);
-        }
-        
-        const linksToAudit = extractionResult.links;
-        console.log(`Found ${linksToAudit.length} links for full audit.`);
-
-        for (const link of linksToAudit) {
-            for (const device of ['desktop', 'mobile']) {
-                console.log(`--- Starting full ${device} audit for: ${link} ---`);
-                let jsonReportPath = null;
-                let imagePaths = {};
-
-                try {
-                    const auditResult = await runLighthouseAudit({ url: link, device: device, format: 'json' });
-
-                    if (auditResult.success) {
-                        jsonReportPath = auditResult.reportPath;
-                        imagePaths = await createAllHighlightedImages(jsonReportPath, jobFolder);
-
-                        // --- FIX STEP 4: Pass the final destination to the report generator ---
-                        await generateSeniorAccessibilityReport({
-                            inputFile: jsonReportPath,
-                            clientEmail: email,
-                            imagePaths: imagePaths,
-                            outputDir: finalReportFolder // Pass the correct folder here
-                        });
-                        
-                    } else {
-                        console.error(`Skipping full report for ${link} (${device}). Reason: ${auditResult.error}`);
-                    }
-                } catch (pageError) {
-                    console.error(`An unexpected error occurred while auditing ${link} (${device}):`, pageError.message);
-                } finally {
-                    if (jsonReportPath) await fs.unlink(jsonReportPath).catch(e => console.error(e.message));
-                    if (imagePaths && typeof imagePaths === 'object') {
-                        for (const imgPath of Object.values(imagePaths)) {
-                            if (imgPath) await fs.unlink(imgPath).catch(e => console.error(e.message));
-                        }
-                    }
-                }
-            }
-        }
-
-        console.log(`🎉 All links for ${email} have been processed for the full audit.`);
-
-        await signalBackend({
-            status: 'completed',
-            clientEmail: email,
-            folderPath: finalReportFolder // This line now correctly reflects the folder used
-        });
-    } catch (jobError) {
-        console.error(`A critical error occurred during the full job for ${email}:`, jobError.message);
-        await signalBackend({ status: 'failed', clientEmail: email, error: jobError.message });
-        await fs.rm(jobFolder, { recursive: true, force: true });
+    if (!extractionResult.success) {
+      throw new Error(`Link extraction failed: ${extractionResult.details}`);
     }
+
+    const linksToAudit = extractionResult.links;
+    console.log(`Found ${linksToAudit.length} links for full audit.`);
+
+    for (const link of linksToAudit) {
+      for (const device of ['desktop', 'mobile']) {
+        console.log(`--- Starting full ${device} audit for: ${link} ---`);
+        let jsonReportPath = null;
+        let imagePaths = {};
+
+        try {
+          const auditResult = await runLighthouseAudit({ url: link, device, format: 'json' });
+          if (auditResult.success) {
+            jsonReportPath = auditResult.reportPath;
+            imagePaths = await createAllHighlightedImages(jsonReportPath, jobFolder);
+
+            await generateSeniorAccessibilityReport({
+              inputFile: jsonReportPath,
+              clientEmail: email,
+              imagePaths,
+              outputDir: finalReportFolder,
+            });
+          } else {
+            console.error(`Skipping full report for ${link} (${device}). Reason: ${auditResult.error}`);
+          }
+        } catch (pageError) {
+          console.error(`An unexpected error occurred while auditing ${link} (${device}):`, pageError.message);
+        } finally {
+          if (jsonReportPath) await fs.unlink(jsonReportPath).catch((e) => console.error(e.message));
+          if (imagePaths && typeof imagePaths === 'object') {
+            for (const imgPath of Object.values(imagePaths)) {
+              if (imgPath) await fs.unlink(imgPath).catch((e) => console.error(e.message));
+            }
+          }
+        }
+      }
+    }
+
+    console.log(`🎉 All links for ${email} have been processed for both desktop and mobile.`);
+
+    // Send a single email with all files in the report folder
+    await sendAuditReportEmail({
+      to: email,
+      subject: 'Your SilverSurfers Audit Results',
+      text: 'Attached are all your senior accessibility audit results. Thank you for using SilverSurfers!',
+      folderPath: finalReportFolder,
+    });
+
+    // Cleanup the report folder using the cleanup route
+    try {
+      const axios = await import('axios');
+      const apiBaseUrl = process.env.API_BASE_URL || `http://localhost:${PORT}`;
+      await axios.default.post(`${apiBaseUrl}/cleanup`, { folderPath: finalReportFolder });
+      console.log('Report folder cleaned up:', finalReportFolder);
+    } catch (cleanupErr) {
+      console.error('Cleanup error:', cleanupErr);
+    }
+
+    await signalBackend({
+      status: 'completed',
+      clientEmail: email,
+      folderPath: finalReportFolder,
+    });
+  } catch (jobError) {
+    console.error(`A critical error occurred during the full job for ${email}:`, jobError.message);
+    await signalBackend({ status: 'failed', clientEmail: email, error: jobError.message });
+  } finally {
+    // Always cleanup temp working folder
+    await fs.rm(jobFolder, { recursive: true, force: true }).catch(() => {});
+  }
 };
 
 const runQuickScanProcess = async (job) => {
@@ -125,7 +153,7 @@ const runQuickScanProcess = async (job) => {
         const baseReportsDir = 'reports-lite';
         const userSpecificOutputDir = path.join(baseReportsDir, `${email}_lite`);
 
-        const pdfResult = await generateLiteAccessibilityReport(jsonReportPath, userSpecificOutputDir);
+          const pdfResult = await generateLiteAccessibilityReport(jsonReportPath, userSpecificOutputDir);
 
         console.log(`✅ Quick scan PDF generated for ${email} at ${pdfResult.reportPath}`);
         return pdfResult;
@@ -210,13 +238,25 @@ class JobQueue {
 
 const app = express();
 app.use(express.json());
-const PORT = process.env.PORT || 3000;
+app.use(cors());
+app.use('/auth', authRoutes);
+const PORT = process.env.PORT || 5000;
 
 // --- Create two independent queues that will share the global lock ---
 const fullAuditQueue = new JobQueue(runFullAuditProcess, 'FullAuditQueue');
 const quickScanQueue = new JobQueue(runQuickScanProcess, 'QuickScanQueue');
 
 // --- Endpoints (No changes needed here) ---
+
+// Initialize Database
+await (async () => {
+  try {
+    const mongoUri = process.env.MONGODB_URI;
+    await connectDB(mongoUri);
+  } catch (err) {
+    console.warn('Continuing without DB due to connection error. Some features may be limited.');
+  }
+})();
 
 app.post('/start-audit', (req, res) => {
     const { email, url } = req.body;
@@ -227,29 +267,89 @@ app.post('/start-audit', (req, res) => {
     res.status(202).json({ message: 'Full audit request has been queued.' });
 });
 
-app.post('/quick-scan', async (req, res) => {
-    const { email, url } = req.body;
+// Create Stripe Checkout Session
+app.post('/create-checkout-session', authRequired, async (req, res) => {
+  try {
+    const { email, url, packageId } = req.body || {};
     if (!email || !url) {
-        return res.status(400).json({ error: 'Email and URL are required.' });
+      return res.status(400).json({ error: 'Email and URL are required.' });
     }
-    try {
-        const result = await quickScanQueue.addRequestJob({ email, url });
-        res.status(200).json({
-            message: 'Quick scan completed successfully.',
-            reportPath: result.reportPath,
-            score: result.score
-        });
-    } catch (error) {
-        res.status(500).json({
-            message: 'Quick scan failed to complete.',
-            error: error.message
-        });
-    }
+
+    // Map packageId to price amount (in cents)
+    const packagePricing = {
+      1: 29900, // Senior-Friendly Assessment €299
+      2: 150000, // Full Accessibility Optimization from €1,500
+      3: 250000, // Premium Senior Experience from €2,500
+    };
+    const amount = packagePricing[packageId] || packagePricing[1];
+
+    const successUrlBase = process.env.FRONTEND_URL || 'http://localhost:3001';
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'payment',
+      payment_method_types: ['card'],
+      customer_email: email,
+      line_items: [
+        {
+          price_data: {
+            currency: 'eur',
+            product_data: { name: 'SilverSurfers Assessment' },
+            unit_amount: amount,
+          },
+          quantity: 1,
+        },
+      ],
+      metadata: { email, url, packageId: String(packageId || 1) },
+      success_url: `${successUrlBase}/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${successUrlBase}/checkout?canceled=1`,
+    });
+
+    return res.json({ url: session.url });
+  } catch (err) {
+    console.error('Stripe session error:', err);
+    return res.status(500).json({ error: 'Failed to create checkout session.' });
+  }
 });
 
-app.post('/cleanup', async (req, res) => { /* ... your cleanup logic ... */ });
+// Confirm payment and start audit after successful checkout
+app.get('/confirm-payment', async (req, res) => {
+  try {
+    const { session_id } = req.query;
+    if (!session_id) return res.status(400).json({ error: 'session_id is required' });
+
+    const session = await stripe.checkout.sessions.retrieve(String(session_id));
+    if (session.payment_status !== 'paid') {
+      return res.status(400).json({ error: 'Payment not completed yet.' });
+    }
+
+    const email = session.metadata?.email;
+    const url = session.metadata?.url;
+    if (!email || !url) {
+      return res.status(400).json({ error: 'Missing metadata to start audit.' });
+    }
+
+  // Queue the full audit as a background job after successful payment
+  fullAuditQueue.addBgJob({ email, url });
+    return res.json({ message: 'Payment confirmed. Audit job queued.' });
+  } catch (err) {
+    console.error('Confirm payment error:', err);
+    return res.status(500).json({ error: 'Failed to confirm payment.' });
+  }
+});
+
+app.post('/cleanup', async (req, res) => {
+  const { folderPath } = req.body;
+  if (!folderPath) {
+    return res.status(400).json({ error: 'folderPath is required.' });
+  }
+  try {
+    await fs.rm(folderPath, { recursive: true, force: true });
+    res.status(200).json({ message: 'Cleanup successful.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to perform cleanup.' });
+  }
+});
 
 app.listen(PORT, () => {
     console.log(`🚀 Audit server listening on http://localhost:${PORT}`);
-    // ...
 });
