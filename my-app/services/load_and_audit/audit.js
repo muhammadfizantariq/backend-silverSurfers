@@ -80,7 +80,23 @@ async function performAudit(url, options) {
 
   let browser = null;
   try {
-    const launchOptions = { headless: 'new', args: useAdvancedFeatures ? ['--single-process', '--no-zygote'] : [] };
+    const baseArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-default-browser-check',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+    ];
+    const extraArgs = useAdvancedFeatures ? ['--single-process', '--no-zygote'] : [];
+    const launchOptions = {
+      headless: 'new',
+      args: [...baseArgs, ...extraArgs],
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || process.env.CHROME_PATH,
+    };
     browser = await puppeteer.launch(launchOptions);
     
     const page = await browser.newPage();
@@ -203,7 +219,20 @@ const cookieSelectors = [
       })
     };
 
-    const lighthouseResult = await lighthouse(url, lighthouseOptions, customConfig);
+    // Extend config settings to increase timeouts and avoid simulated throttling in constrained environments
+    const lhConfig = {
+      ...customConfig,
+      settings: {
+        ...(customConfig.settings || {}),
+        throttlingMethod: 'provided',
+        maxWaitForFcp: 120000,
+        maxWaitForLoad: 150000,
+        // Avoid very long full-page screenshots on heavy pages
+        disableFullPageScreenshot: true,
+      },
+    };
+
+    const lighthouseResult = await lighthouse(url, lighthouseOptions, lhConfig);
     
     // Calculate Silver Surfers score before generating report
     console.log('🎯 [Score Validation] Calculating Silver Surfers score...');
@@ -234,7 +263,7 @@ const cookieSelectors = [
     const urlObject = new URL(url);
     const hostname = urlObject.hostname.replace(/\./g, '-');
     const timestamp = Date.now();
-    const reportPath = `report-${hostname}-${timestamp}.${format}`;
+  const reportPath = `report-${hostname}-${timestamp}.${format}`;
     
     fs.writeFileSync(reportPath, report);
     console.log(`✅ Lighthouse report saved to ${reportPath}`);

@@ -174,7 +174,18 @@ const runQuickScanProcess = async (job) => {
 let isBrowserInUse = false; // This is the single, shared lock for both queues.
 // Track active/queued jobs to avoid duplicates (same email+url)
 const activeJobs = new Set();
-const jobKey = (job) => `${job.email || ''}::${job.url || ''}`;
+function normalizeUrl(u) {
+  if (!u) return '';
+  try {
+    const url = new URL(u.startsWith('http') ? u : `https://${u}`);
+    // remove trailing slash for consistency
+    url.pathname = url.pathname.replace(/\/+$/, '');
+    return url.toString();
+  } catch {
+    return u.replace(/\/+$/, '');
+  }
+}
+const jobKey = (job) => `${(job.email || '').toLowerCase()}::${normalizeUrl(job.url)}`;
 
 // =================================================================
 // ## 2. The JobQueue Class (Updated to use the shared lock) ##
