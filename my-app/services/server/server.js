@@ -172,6 +172,9 @@ const runQuickScanProcess = async (job) => {
 // ## 1. SHARED STATE (The Global Lock) ##
 // =================================================================
 let isBrowserInUse = false; // This is the single, shared lock for both queues.
+// Track active/queued jobs to avoid duplicates (same email+url)
+const activeJobs = new Set();
+const jobKey = (job) => `${job.email || ''}::${job.url || ''}`;
 
 // =================================================================
 // ## 2. The JobQueue Class (Updated to use the shared lock) ##
@@ -184,17 +187,30 @@ class JobQueue {
         this.queueName = queueName; // For better logging
     }
 
-    addBgJob(job) {
-        this.queue.push({ job, isBg: true });
-        this.processQueue();
+  addBgJob(job) {
+    const key = jobKey(job);
+    // Skip if same job is already queued or running
+    if (activeJobs.has(key) || this.queue.some(t => jobKey(t.job) === key)) {
+      console.log(`[${this.queueName}] Duplicate job skipped for ${job.email} (${job.url}).`);
+      return;
     }
+    activeJobs.add(key);
+    this.queue.push({ job, key, isBg: true });
+    this.processQueue();
+  }
 
-    addRequestJob(job) {
-        return new Promise((resolve, reject) => {
-            this.queue.push({ job, resolve, reject, isBg: false });
-            this.processQueue();
-        });
-    }
+  addRequestJob(job) {
+    return new Promise((resolve, reject) => {
+      const key = jobKey(job);
+      if (activeJobs.has(key) || this.queue.some(t => jobKey(t.job) === key)) {
+        console.log(`[${this.queueName}] Duplicate request job skipped for ${job.email} (${job.url}).`);
+        return resolve({ skipped: true, reason: 'duplicate' });
+      }
+      activeJobs.add(key);
+      this.queue.push({ job, key, resolve, reject, isBg: false });
+      this.processQueue();
+    });
+  }
 
     async processQueue() {
         // CRITICAL CHANGE: Check the GLOBAL lock, not an internal one.
@@ -205,7 +221,7 @@ class JobQueue {
         // CRITICAL CHANGE: Set the GLOBAL lock to true.
         isBrowserInUse = true;
         
-        const task = this.queue.shift();
+  const task = this.queue.shift();
         console.log(`[${this.queueName}] picked up job for ${task.job.email}. Browser is now locked.`);
         
         try {
@@ -220,8 +236,11 @@ class JobQueue {
             }
         } finally {
             // CRITICAL CHANGE: Release the GLOBAL lock so the next job can run.
-            console.log(`[${this.queueName}] finished job for ${task.job.email}. Releasing browser lock.`);
+      console.log(`[${this.queueName}] finished job for ${task.job.email}. Releasing browser lock.`);
             isBrowserInUse = false;
+      if (task && task.key) {
+        activeJobs.delete(task.key);
+      }
             
             // IMPORTANT: After releasing the lock, we must trigger BOTH queues
             // to check if they can start a new job.

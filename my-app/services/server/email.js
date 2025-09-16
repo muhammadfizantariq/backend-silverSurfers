@@ -34,6 +34,30 @@ function buildTransport() {
   return { transporter };
 }
 
+async function collectAttachmentsRecursive(rootDir) {
+  const results = [];
+  async function walk(dir) {
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const de of entries) {
+      const full = path.join(dir, de.name);
+      if (de.isDirectory()) {
+        await walk(full);
+      } else if (de.isFile()) {
+        // Only attach PDFs by default to keep emails smaller
+        if (full.toLowerCase().endsWith('.pdf')) {
+          results.push({ filename: path.relative(rootDir, full), path: full });
+        }
+      }
+    }
+  }
+  try {
+    await walk(rootDir);
+  } catch (e) {
+    console.error('Error walking attachments folder:', e.message);
+  }
+  return results;
+}
+
 export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
   const { transporter, reason } = buildTransport();
   if (!transporter) {
@@ -44,14 +68,7 @@ export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
   // Collect all files in the report folder
   let attachments = [];
   if (folderPath) {
-    try {
-      const dirEntries = await fs.readdir(folderPath, { withFileTypes: true });
-      attachments = dirEntries
-        .filter(de => de.isFile())
-        .map(de => ({ filename: de.name, path: path.join(folderPath, de.name) }));
-    } catch (err) {
-      console.error('Error reading report folder:', err);
-    }
+    attachments = await collectAttachmentsRecursive(folderPath);
   }
 
   const mailOptions = {
