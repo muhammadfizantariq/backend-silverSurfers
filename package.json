@@ -9,7 +9,8 @@
   "author": "",
   "license": "ISC",
   "description": "",
-  "dependencies": {
+      "start": "node my-app/services/server/server.js",
+      "postinstall": "node -e \"console.log('Skipping Chromium download; using system Chromium in Docker')\""
     "axios": "^1.12.1",
     "bcryptjs": "^3.0.2",
     "cheerio": "^1.1.2",

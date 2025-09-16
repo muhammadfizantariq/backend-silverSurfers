@@ -28,3 +28,10 @@ reports-full/
 reports-lite/
 **/reports/
 **/reports-*/
+
+# Puppeteer cache
+.cache/
+**/.cache/
+
+# Docker
+.dockerignore
