@@ -3,19 +3,43 @@ import nodemailer from 'nodemailer';
 import fs from 'fs/promises';
 import path from 'path';
 import dotenv from 'dotenv';
+// Load .env from current working directory first, then fallback three levels up
+dotenv.config();
 dotenv.config({ path: path.resolve(process.cwd(), '../../../.env') });
 
-export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
-  // Load SMTP settings from environment variables
+function buildTransport() {
+  const host = process.env.SMTP_HOST;
+  const port = Number(process.env.SMTP_PORT) || 587;
+  const secure = typeof process.env.SMTP_SECURE === 'string'
+    ? process.env.SMTP_SECURE === 'true'
+    : port === 465; // default secure for 465
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASS;
+
+  if (!host) {
+    return { transporter: null, reason: 'SMTP not configured (missing SMTP_HOST)' };
+  }
+
   const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
+    host,
+    port,
+    secure,
+    auth: user && pass ? { user, pass } : undefined,
+    connectionTimeout: Number(process.env.SMTP_CONNECTION_TIMEOUT) || 20000,
+    greetingTimeout: Number(process.env.SMTP_GREETING_TIMEOUT) || 10000,
+    // Optionally allow skipping TLS verification for dev setups
+    ...(process.env.SMTP_IGNORE_TLS_ERRORS === 'true' ? { tls: { rejectUnauthorized: false } } : {}),
   });
+
+  return { transporter };
+}
+
+export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
+  const { transporter, reason } = buildTransport();
+  if (!transporter) {
+    console.warn('Email skipped:', reason);
+    return { success: false, error: reason };
+  }
 
   // Collect all files in the report folder
   let attachments = [];
@@ -31,14 +55,16 @@ export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
   }
 
   const mailOptions = {
-    from: `SilverSurfers <${process.env.SMTP_USER}>`,
+    from: `SilverSurfers <${process.env.SMTP_USER || 'no-reply@silversurfers.local'}>`,
     to,
     subject,
     text,
-    attachments
+    attachments,
   };
 
   try {
+    // Verify transport before sending to fail fast with clearer errors
+    await transporter.verify();
     const info = await transporter.sendMail(mailOptions);
     console.log('Email sent:', info.response);
     return { success: true };
@@ -49,19 +75,19 @@ export async function sendAuditReportEmail({ to, subject, text, folderPath }) {
 }
 
 export async function sendBasicEmail({ to, subject, text }) {
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: process.env.SMTP_PORT,
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
-  });
+  const { transporter, reason } = buildTransport();
+  if (!transporter) {
+    console.warn('Email skipped:', reason);
+    return { success: false, error: reason };
+  }
   const mailOptions = {
-    from: `SilverSurfers <${process.env.SMTP_USER}>`,
+    from: `SilverSurfers <${process.env.SMTP_USER || 'no-reply@silversurfers.local'}>`,
     to,
     subject,
-    text
+    text,
   };
   try {
+    await transporter.verify();
     const info = await transporter.sendMail(mailOptions);
     console.log('Email sent:', info.response);
     return { success: true };
