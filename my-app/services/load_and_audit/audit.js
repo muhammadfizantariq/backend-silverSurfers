@@ -220,19 +220,49 @@ const cookieSelectors = [
     };
 
     // Extend config settings to increase timeouts and avoid simulated throttling in constrained environments
-    const lhConfig = {
-      ...customConfig,
-      settings: {
-        ...(customConfig.settings || {}),
-        throttlingMethod: 'provided',
-        maxWaitForFcp: 120000,
-        maxWaitForLoad: 150000,
-        // Avoid very long full-page screenshots on heavy pages
-        disableFullPageScreenshot: true,
-      },
+    const MAX_WAIT_FOR_FCP = Number(process.env.LH_MAX_WAIT_FOR_FCP_MS) || 120000;
+    const MAX_WAIT_FOR_LOAD = Number(process.env.LH_MAX_WAIT_FOR_LOAD_MS) || 180000;
+    const TOTAL_TIMEOUT = Number(process.env.LH_TOTAL_TIMEOUT_MS) || 210000; // watchdog for entire LH run
+    const BLOCKED_PATTERNS = (process.env.LH_BLOCKED_URL_PATTERNS || '*.doubleclick.net,*.googlesyndication.com,*.google-analytics.com,*.googletagmanager.com,*.facebook.com,*.hotjar.com,*.taboola.com')
+      .split(',')
+      .map(s => s.trim())
+      .filter(Boolean);
+
+    const baseSettings = {
+      ...(customConfig.settings || {}),
+      throttlingMethod: 'provided',
+      maxWaitForFcp: MAX_WAIT_FOR_FCP,
+      maxWaitForLoad: MAX_WAIT_FOR_LOAD,
+      disableFullPageScreenshot: true,
+      disableStorageReset: true,
+      onlyCategories: ['senior-friendly'],
+      blockedUrlPatterns: BLOCKED_PATTERNS,
     };
 
-    const lighthouseResult = await lighthouse(url, lighthouseOptions, lhConfig);
+    const lhConfig = { ...customConfig, settings: baseSettings };
+
+    // Watchdog wrapper to abort LH if it hangs too long
+    const withTimeout = (p, ms, label) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error(`LH_TIMEOUT:${label}:${ms}`)), ms))
+    ]);
+
+    let lighthouseResult;
+    try {
+      lighthouseResult = await withTimeout(lighthouse(url, lighthouseOptions, lhConfig), TOTAL_TIMEOUT, 'navigation');
+    } catch (e) {
+      const msg = e && e.message ? e.message : String(e);
+      console.error(`⚠️ Lighthouse failed or timed out (${msg}). Attempting fallback snapshot mode...`);
+      const fallbackSettings = {
+        ...baseSettings,
+        // Snapshot mode avoids full navigation sequences on heavy pages
+        // Many navigation-only audits will be skipped, but our custom category should still run
+        // @ts-ignore gatherMode is supported by Lighthouse config
+        gatherMode: 'snapshot',
+      };
+      const fallbackConfig = { ...customConfig, settings: fallbackSettings };
+      lighthouseResult = await withTimeout(lighthouse(url, lighthouseOptions, fallbackConfig), Math.max(60000, TOTAL_TIMEOUT - 30000), 'snapshot');
+    }
     
     // Calculate Silver Surfers score before generating report
     console.log('🎯 [Score Validation] Calculating Silver Surfers score...');
