@@ -8,8 +8,8 @@ import authRoutes from './authRoutes.js';
 import { connectDB } from './db.js';
 import { authRequired } from './auth.js';
 
-// Load env from project root (three levels up)
-dotenv.config({ path: path.resolve(process.cwd(), '../../../.env') });
+// Load env once; allow override via SERVER_DOTENV_PATH if provided
+dotenv.config({ path: process.env.SERVER_DOTENV_PATH || undefined });
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
 
 
@@ -174,6 +174,8 @@ const runQuickScanProcess = async (job) => {
 let isBrowserInUse = false; // This is the single, shared lock for both queues.
 // Track active/queued jobs to avoid duplicates (same email+url)
 const activeJobs = new Set();
+let shuttingDown = false;
+let currentJobPromise = null;
 function normalizeUrl(u) {
   if (!u) return '';
   try {
@@ -223,9 +225,9 @@ class JobQueue {
     });
   }
 
-    async processQueue() {
+  async processQueue() {
         // CRITICAL CHANGE: Check the GLOBAL lock, not an internal one.
-        if (isBrowserInUse || this.queue.length === 0) {
+    if (isBrowserInUse || this.queue.length === 0 || shuttingDown) {
             return;
         }
 
@@ -235,8 +237,9 @@ class JobQueue {
   const task = this.queue.shift();
         console.log(`[${this.queueName}] picked up job for ${task.job.email}. Browser is now locked.`);
         
-        try {
-            const result = await this.processFunction(task.job);
+    try {
+      currentJobPromise = this.processFunction(task.job);
+      const result = await currentJobPromise;
             if (!task.isBg) {
                 task.resolve(result);
             }
@@ -248,7 +251,8 @@ class JobQueue {
         } finally {
             // CRITICAL CHANGE: Release the GLOBAL lock so the next job can run.
       console.log(`[${this.queueName}] finished job for ${task.job.email}. Releasing browser lock.`);
-            isBrowserInUse = false;
+      isBrowserInUse = false;
+      currentJobPromise = null;
       if (task && task.key) {
         activeJobs.delete(task.key);
       }
@@ -293,6 +297,9 @@ app.post('/start-audit', (req, res) => {
     if (!email || !url) {
         return res.status(400).json({ error: 'Email and URL are required.' });
     }
+  if (shuttingDown) {
+    return res.status(503).json({ error: 'Server is shutting down. Try again later.' });
+  }
     fullAuditQueue.addBgJob({ email, url });
     res.status(202).json({ message: 'Full audit request has been queued.' });
 });
@@ -359,6 +366,9 @@ app.get('/confirm-payment', async (req, res) => {
     }
 
   // Queue the full audit as a background job after successful payment
+  if (shuttingDown) {
+    return res.status(503).json({ error: 'Server is shutting down. Try again later.' });
+  }
   fullAuditQueue.addBgJob({ email, url });
     return res.json({ message: 'Payment confirmed. Audit job queued.' });
   } catch (err) {
@@ -383,3 +393,23 @@ app.post('/cleanup', async (req, res) => {
 app.listen(PORT, () => {
     console.log(`🚀 Audit server listening on http://localhost:${PORT}`);
 });
+
+// Graceful shutdown: let current job finish before exiting
+async function handleShutdown(signal) {
+  try {
+    shuttingDown = true;
+    const grace = Number(process.env.SHUTDOWN_GRACE_MS) || 15000;
+    console.log(`Received ${signal}. Allowing in-flight job up to ${grace}ms to finish...`);
+    if (currentJobPromise) {
+      await Promise.race([
+        currentJobPromise.catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, grace)),
+      ]);
+    }
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));

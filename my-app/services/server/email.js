@@ -3,9 +3,8 @@ import nodemailer from 'nodemailer';
 import fs from 'fs/promises';
 import path from 'path';
 import dotenv from 'dotenv';
-// Load .env from current working directory first, then fallback three levels up
-dotenv.config();
-dotenv.config({ path: path.resolve(process.cwd(), '../../../.env') });
+// Load .env once; allow override via SERVER_DOTENV_PATH if provided
+dotenv.config({ path: process.env.SERVER_DOTENV_PATH || undefined });
 
 function buildTransport() {
   const host = process.env.SMTP_HOST;

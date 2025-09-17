@@ -8,7 +8,7 @@ const UserSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
-      index: true,
+      // index will be created by the unique constraint
     },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['user', 'admin'], default: 'user' },
@@ -23,7 +23,5 @@ const UserSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
-UserSchema.index({ email: 1 }, { unique: true });
 
 export default mongoose.model('User', UserSchema);
