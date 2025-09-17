@@ -1,69 +1,125 @@
 // custom-config.js
-// Resolve custom gatherers/audits via absolute paths so Lighthouse can load them in Docker/Render.
 
-import path from 'path';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const r = (rel) => path.resolve(__dirname, rel);
 
-const GATHERERS = {
-  text: r('custom_gatherers/text-gatherer.js'),
-  color: r('custom_gatherers/color-gatherer.js'),
-  layout: r('custom_gatherers/layout-gatherer.js'),
-};
+/**
 
-const AUDITS = {
-  text: r('custom_audits/text-audit.js'),
-  color: r('custom_audits/color-audit.js'),
-  layout: r('custom_audits/layout-audit.js'),
-};
+ * @license
 
-const config = {
+ * Copyright 2025 Google LLC
+
+ * SPDX-License-Identifier: Apache-2.0
+
+ */
+
+
+
+export default {
+
+  // 1. We still extend the default config to get access to all the audits and gatherers.
+
   extends: 'lighthouse:default',
-  settings: {
-    onlyCategories: ['senior-friendly'],
-  },
-  artifacts: [
-    { id: 'PageText', gatherer: GATHERERS.text },
-    { id: 'PageLinkColors', gatherer: GATHERERS.color },
-    { id: 'BrittleLayoutElements', gatherer: GATHERERS.layout },
-  ],
-  audits: [
-    { path: AUDITS.text },
-    { path: AUDITS.color },
-    { path: AUDITS.layout },
-  ],
-  categories: {
-    'senior-friendly': {
-      title: 'Senior Friendliness',
-      description:
-        'A comprehensive score based on audits for readability, ease of use, and a stable, non-confusing experience.',
-      auditRefs: [
-        // Tier 1
-        { id: 'color-contrast', weight: 10 },
-        { id: 'target-size', weight: 10 },
-        { id: 'viewport', weight: 10 },
-        { id: 'cumulative-layout-shift', weight: 10 },
-        { id: 'text-font-audit', weight: 10 },
-        { id: 'layout-brittle-audit', weight: 10 },
-        // Tier 2
-        { id: 'largest-contentful-paint', weight: 5 },
-        { id: 'total-blocking-time', weight: 5 },
-        { id: 'link-name', weight: 5 },
-        { id: 'button-name', weight: 5 },
-        { id: 'label', weight: 5 },
-        { id: 'interactive-color-audit', weight: 5 },
-        // Tier 3
-        { id: 'is-on-https', weight: 2 },
-        { id: 'dom-size', weight: 2 },
-        { id: 'heading-order', weight: 2 },
-        { id: 'errors-in-console', weight: 2 },
-        { id: 'geolocation-on-start', weight: 2 },
-      ],
-    },
-  },
-};
 
-export default config;
+
+
+  // 2. Add a 'settings' object to control what the runner executes. 
+
+  settings: {
+
+    // This is the key change: tell Lighthouse to build only our custom category.
+
+    // It will automatically run only the audits required for this category.
+
+    onlyCategories: ['senior-friendly'],
+
+  },
+
+
+
+  // 3. Your custom gatherers and audits are still registered here.
+
+  artifacts: [
+
+    { id: 'PageText', gatherer: '../load_and_audit/custom_gatherers/text-gatherer.js' },
+
+    { id: 'PageLinkColors', gatherer: '../load_and_audit/custom_gatherers/color-gatherer.js' },
+
+    { id: 'BrittleLayoutElements', gatherer: '../load_and_audit/custom_gatherers/layout-gatherer.js' },
+
+  ],
+
+  audits: [
+
+    { path: '../load_and_audit/custom_audits/text-audit.js' },
+
+    { path: '../load_and_audit/custom_audits/color-audit.js' },
+
+    { path: '../load_and_audit/custom_audits/layout-audit.js' },
+
+  ],
+
+
+
+  // 4. The categories section defines the content of your custom category.
+
+  categories: {
+
+    'senior-friendly': {
+
+      title: 'Senior Friendliness',
+
+      description: 'A comprehensive score based on audits for readability, ease of use, and a stable, non-confusing experience.',
+
+      auditRefs: [
+
+        // --- Tier 1: Critical (Weight: 10 each) ---
+
+        { id: 'color-contrast', weight: 10 },
+
+        { id: 'target-size', weight: 10 },
+
+        { id: 'viewport', weight: 10 },
+
+        { id: 'cumulative-layout-shift', weight: 10 },
+
+        { id: 'text-font-audit', weight: 10 },         // Your custom audit
+
+        { id: 'layout-brittle-audit', weight: 10 },    // Your custom audit
+
+
+
+        // --- Tier 2: Important (Weight: 5 each) ---
+
+        { id: 'largest-contentful-paint', weight: 5 },
+
+        { id: 'total-blocking-time', weight: 5 },
+
+        { id: 'link-name', weight: 5 },
+
+        { id: 'button-name', weight: 5 },
+
+        { id: 'label', weight: 5 },
+
+        { id: 'interactive-color-audit', weight: 5 }, // Your custom audit
+
+
+
+        // --- Tier 3: Foundational (Weight: 2 each) ---
+
+        { id: 'is-on-https', weight: 2 },
+
+        { id: 'dom-size', weight: 2 },
+
+        { id: 'heading-order', weight: 2 },
+
+        { id: 'errors-in-console', weight: 2 },
+
+        { id: 'geolocation-on-start', weight: 2 },
+
+      ],
+
+    },
+
+  },
+
+};

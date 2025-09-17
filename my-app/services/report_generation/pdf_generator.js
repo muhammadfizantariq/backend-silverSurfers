@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import PDFDocument from 'pdfkit';
 import customConfig from '../load_and_audit/custom-config.js';
@@ -549,15 +550,30 @@ class ElderlyAccessibilityPDFGenerator {
             const clientEmail = options.clientEmail || 'unknown-client';
             const formFactor = reportData.configSettings?.formFactor || 'desktop';
             const url = reportData.finalUrl || 'unknown-url';
-            
-            // Create sanitized filename from URL
-            const sanitizedUrl = url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9.-]/g, '-').replace(/-+/g, '-');
-            const fileName = `${sanitizedUrl}-${formFactor}.pdf`;
 
-            // Use outputDir if provided, otherwise use clientEmail as folder
+            // Build a safe, short filename from URL (strip query/hash, slugify, truncate, add short hash)
+            let hostname = 'site';
+            let pathname = '';
+            try {
+                const u = new URL(url);
+                hostname = u.hostname || 'site';
+                pathname = (u.pathname || '/').replace(/\/+$/, ''); // drop trailing slash
+            } catch {}
+            const rawBase = `${hostname}${pathname}` || hostname;
+            // slugify: allow letters, numbers, dots and dashes
+            let slug = rawBase.replace(/[^a-zA-Z0-9.-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+            if (!slug) slug = hostname.replace(/[^a-zA-Z0-9.-]/g, '-');
+            // limit slug length to avoid Windows path limits
+            const MAX_SLUG = 80;
+            if (slug.length > MAX_SLUG) slug = slug.slice(0, MAX_SLUG).replace(/-+$/g, '');
+            const shortHash = crypto.createHash('sha1').update(url).digest('hex').slice(0, 8);
+            const fileName = `${slug}-${formFactor}-${shortHash}.pdf`;
+
+            // Use outputDir directly if provided (do NOT append clientEmail again to avoid duplication)
+            // Otherwise, create a folder from clientEmail
             let clientFolder;
             if (options.outputDir) {
-                clientFolder = path.resolve(options.outputDir, clientEmail);
+                clientFolder = path.resolve(options.outputDir);
             } else {
                 clientFolder = path.resolve(clientEmail);
             }
