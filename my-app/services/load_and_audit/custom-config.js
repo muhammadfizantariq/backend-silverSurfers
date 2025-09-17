@@ -41,18 +41,18 @@ export default {
 
 
 
-  // 3. Your custom gatherers and audits are still registered here.
-    artifacts: [
-    { id: 'PageText', gatherer: path.resolve(__dirname, 'load_and_audit/custom_gatherers/text-gatherer.js') },
-    { id: 'PageLinkColors', gatherer: path.resolve(__dirname, 'load_and_audit/custom_gatherers/color-gatherer.js') },
-    { id: 'BrittleLayoutElements', gatherer: path.resolve(__dirname, 'load_and_audit/custom_gatherers/layout-gatherer.js') },
+  artifacts: [
+    { id: 'PageText', gatherer: path.resolve(__dirname, 'custom_gatherers/text-gatherer.js') },
+    { id: 'PageLinkColors', gatherer: path.resolve(__dirname, 'custom_gatherers/color-gatherer.js') },
+    { id: 'BrittleLayoutElements', gatherer: path.resolve(__dirname, 'custom_gatherers/layout-gatherer.js') },
   ],
 
   audits: [
-    { path: path.resolve(__dirname, 'load_and_audit/custom_audits/text-audit.js') },
-    { path: path.resolve(__dirname, 'load_and_audit/custom_audits/color-audit.js') },
-    { path: path.resolve(__dirname, 'load_and_audit/custom_audits/layout-audit.js') },
+    { path: path.resolve(__dirname, 'custom_audits/text-audit.js') },
+    { path: path.resolve(__dirname, 'custom_audits/color-audit.js') },
+    { path: path.resolve(__dirname, 'custom_audits/layout-audit.js') },
   ],
+
 
 
 
