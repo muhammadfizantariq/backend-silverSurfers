@@ -30,12 +30,11 @@ export default {
   // 2. Add a 'settings' object to control what the runner executes. 
 
   settings: {
-
-    // This is the key change: tell Lighthouse to build only our custom category.
-
-    // It will automatically run only the audits required for this category.
-
+    // Reduce surface area to our custom category and tune for container deployments
     onlyCategories: ['senior-friendly'],
+    maxWaitForLoad: 120000,
+    throttlingMethod: 'simulate',
+    disableStorageReset: true,
 
   },
 
