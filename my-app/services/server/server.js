@@ -10,7 +10,15 @@ import { authRequired } from './auth.js';
 
 // Load env once; allow override via SERVER_DOTENV_PATH if provided
 dotenv.config({ path: process.env.SERVER_DOTENV_PATH || undefined });
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', { apiVersion: '2024-06-20' });
+
+// Initialize Stripe only if key is provided to avoid crash in local/dev
+const STRIPE_KEY = process.env.STRIPE_SECRET_KEY;
+let stripe = null;
+if (STRIPE_KEY && STRIPE_KEY.trim()) {
+  stripe = new Stripe(STRIPE_KEY, { apiVersion: '2024-06-20' });
+} else {
+  console.warn('[startup] Stripe disabled: STRIPE_SECRET_KEY not set. Payment routes will return 503.');
+}
 
 
 // --- Your Project Modules (CORRECTED IMPORT) ---
@@ -307,6 +315,9 @@ app.post('/start-audit', (req, res) => {
 // Create Stripe Checkout Session
 app.post('/create-checkout-session', authRequired, async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(503).json({ error: 'Payments are disabled on this environment.' });
+    }
     const { email, url, packageId } = req.body || {};
     if (!email || !url) {
       return res.status(400).json({ error: 'Email and URL are required.' });
@@ -351,6 +362,9 @@ app.post('/create-checkout-session', authRequired, async (req, res) => {
 // Confirm payment and start audit after successful checkout
 app.get('/confirm-payment', async (req, res) => {
   try {
+    if (!stripe) {
+      return res.status(503).json({ error: 'Payments are disabled on this environment.' });
+    }
     const { session_id } = req.query;
     if (!session_id) return res.status(400).json({ error: 'session_id is required' });
 
