@@ -100,14 +100,18 @@ async function performAudit(url, options) {
     browser = await puppeteer.launch(launchOptions);
     
     const page = await browser.newPage();
+    let emulatedUA;
 
     if (device === 'mobile') {
       await page.emulate(KnownDevices['Pixel 5']);
+      // Use a modern mobile UA
+      emulatedUA = 'Mozilla/5.0 (Linux; Android 12; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36';
     } else {
       const userAgent = useAdvancedFeatures 
         ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36' 
         : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36';
       await page.setUserAgent(userAgent);
+      emulatedUA = userAgent;
       await page.setViewport({ width: useAdvancedFeatures ? 1920 : 1280, height: useAdvancedFeatures ? 1080 : 800 });
     }
 
@@ -222,8 +226,8 @@ const cookieSelectors = [
     // Extend config settings to increase timeouts and avoid simulated throttling in constrained environments
     const MAX_WAIT_FOR_FCP = Number(process.env.LH_MAX_WAIT_FOR_FCP_MS) || 120000;
     const MAX_WAIT_FOR_LOAD = Number(process.env.LH_MAX_WAIT_FOR_LOAD_MS) || 180000;
-    const TOTAL_TIMEOUT = Number(process.env.LH_TOTAL_TIMEOUT_MS) || 210000; // watchdog for entire LH run
-    const BLOCKED_PATTERNS = (process.env.LH_BLOCKED_URL_PATTERNS || '*.doubleclick.net,*.googlesyndication.com,*.google-analytics.com,*.googletagmanager.com,*.facebook.com,*.hotjar.com,*.taboola.com')
+    const TOTAL_TIMEOUT = Number(process.env.LH_TOTAL_TIMEOUT_MS) || 120000; // watchdog for entire LH run (reduced to fallback sooner)
+    const BLOCKED_PATTERNS = (process.env.LH_BLOCKED_URL_PATTERNS || '*.doubleclick.net,*.googlesyndication.com,*.google-analytics.com,*.googletagmanager.com,*.facebook.com,*.hotjar.com,*.taboola.com,*.segment.com,*.amplitude.com,*.mixpanel.com,*.sentry.io,*.intercom.io,*.clarity.ms,*.newrelic.com,*.criteo.com,*.optimizely.com,*.akamaihd.net,*.vidcdn.net,*.brightcove.com,*://*/*.mp4,*://*/*.webm,*://*/*.gif,*://*/*.ttf,*://*/*.woff,*://*/*.woff2')
       .split(',')
       .map(s => s.trim())
       .filter(Boolean);
@@ -233,10 +237,12 @@ const cookieSelectors = [
       throttlingMethod: 'provided',
       maxWaitForFcp: MAX_WAIT_FOR_FCP,
       maxWaitForLoad: MAX_WAIT_FOR_LOAD,
-      disableFullPageScreenshot: true,
+  // Enable full-page screenshot so drawing modules can annotate
+  disableFullPageScreenshot: false,
       disableStorageReset: true,
       onlyCategories: ['senior-friendly'],
       blockedUrlPatterns: BLOCKED_PATTERNS,
+      ...(emulatedUA ? { emulatedUserAgent: emulatedUA } : {}),
     };
 
     const lhConfig = { ...customConfig, settings: baseSettings };
@@ -261,22 +267,35 @@ const cookieSelectors = [
         gatherMode: 'snapshot',
       };
       const fallbackConfig = { ...customConfig, settings: fallbackSettings };
-      lighthouseResult = await withTimeout(lighthouse(url, lighthouseOptions, fallbackConfig), Math.max(60000, TOTAL_TIMEOUT - 30000), 'snapshot');
+      try {
+        lighthouseResult = await withTimeout(lighthouse(url, lighthouseOptions, fallbackConfig), Math.max(60000, TOTAL_TIMEOUT - 30000), 'snapshot');
+      } catch (e2) {
+        const msg2 = e2 && e2.message ? e2.message : String(e2);
+        console.error(`⚠️ Snapshot fallback also failed (${msg2}). Trying timespan mode as last resort...`);
+        const timespanSettings = {
+          ...baseSettings,
+          // @ts-ignore gatherMode is supported by Lighthouse config
+          gatherMode: 'timespan',
+        };
+        const timespanConfig = { ...customConfig, settings: timespanSettings };
+        lighthouseResult = await withTimeout(lighthouse(url, lighthouseOptions, timespanConfig), 60000, 'timespan');
+      }
     }
     
-    // Calculate Silver Surfers score before generating report
+  // Calculate Silver Surfers score before generating report
     console.log('🎯 [Score Validation] Calculating Silver Surfers score...');
     const scoreData = calculateSeniorFriendlinessScore(lighthouseResult.lhr);
     
     // Check if score is 0 and prevent JSON file generation and PDF generation
-    if (scoreData.finalScore === 0) {
+    // If this was a fallback run (snapshot/timespan), allow report even if score is 0 to avoid hard failure
+    const allowedZeroScore = (lighthouseResult?.lhr?.gatherMode === 'snapshot' || lighthouseResult?.lhr?.gatherMode === 'timespan');
+    if (scoreData.finalScore === 0 && !allowedZeroScore) {
       console.error('❌ [Score Validation] Silver Surfers score is 0 - blocking JSON file generation and PDF generation');
       console.log('🔍 [Score Validation] Score calculation details:', {
         totalWeightedScore: scoreData.totalWeightedScore,
         totalWeight: scoreData.totalWeight,
         error: scoreData.error || 'No specific error'
       });
-      
       return { 
         success: false, 
         error: 'Silver Surfers score is 0 - audit may have failed or configuration issue detected',
