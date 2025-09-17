@@ -203,8 +203,8 @@ const cookieSelectors = [
       console.log('🤷 No cookie banner found or handled. Continuing audit.');
     }
 
-    const lighthouseOptions = {
-      port: new URL(browser.wsEndpoint()).port,
+    const makeLhOptions = (br) => ({
+      port: new URL(br.wsEndpoint()).port,
       output: format,
       logLevel: 'info',
       ...(device === 'desktop' && {
@@ -221,7 +221,8 @@ const cookieSelectors = [
         formFactor: 'mobile',
         screenEmulation: { mobile: true },
       })
-    };
+    });
+    let lighthouseOptions = makeLhOptions(browser);
 
     // Extend config settings to increase timeouts and avoid simulated throttling in constrained environments
     const MAX_WAIT_FOR_FCP = Number(process.env.LH_MAX_WAIT_FOR_FCP_MS) || 120000;
@@ -259,6 +260,11 @@ const cookieSelectors = [
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       console.error(`⚠️ Lighthouse failed or timed out (${msg}). Attempting fallback snapshot mode...`);
+      // Ensure any in-flight tracing or sessions are terminated before fallback
+      try { if (browser) { await browser.close(); } } catch {}
+      // Relaunch fresh browser for snapshot fallback
+      browser = await puppeteer.launch(launchOptions);
+      lighthouseOptions = makeLhOptions(browser);
       const fallbackSettings = {
         ...baseSettings,
         // Snapshot mode avoids full navigation sequences on heavy pages
@@ -272,6 +278,10 @@ const cookieSelectors = [
       } catch (e2) {
         const msg2 = e2 && e2.message ? e2.message : String(e2);
         console.error(`⚠️ Snapshot fallback also failed (${msg2}). Trying timespan mode as last resort...`);
+        // Close and relaunch again to avoid TRACING_ALREADY_STARTED
+        try { if (browser) { await browser.close(); } } catch {}
+        browser = await puppeteer.launch(launchOptions);
+        lighthouseOptions = makeLhOptions(browser);
         const timespanSettings = {
           ...baseSettings,
           // @ts-ignore gatherMode is supported by Lighthouse config
